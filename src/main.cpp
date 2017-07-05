@@ -4,6 +4,12 @@
 #include "PID.h"
 #include <math.h>
 
+// This thing is need it to run the code in my computer
+//#define _USE_MATH_DEFINES
+#ifndef M_PI
+#define M_PI (3.14159265358979323846)
+#endif
+
 // for convenience
 using json = nlohmann::json;
 
@@ -28,14 +34,22 @@ std::string hasData(std::string s) {
   return "";
 }
 
+
+int t = 0;
+double set_speed = 30; // desired velocity
+
 int main()
 {
   uWS::Hub h;
 
-  PID pid;
+  PID pid_pos;
+  PID pid_speed;
   // TODO: Initialize the pid variable.
+  
+  pid_pos.Init(0.07, 0.007, 0.7); 
+  pid_speed.Init(10, 1, 20.3);
 
-  h.onMessage([&pid](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, uWS::OpCode opCode) {
+  h.onMessage([&pid_pos, &pid_speed](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
     // The 2 signifies a websocket event
@@ -46,24 +60,60 @@ int main()
         auto j = json::parse(s);
         std::string event = j[0].get<std::string>();
         if (event == "telemetry") {
+          
+          
+          
           // j[1] is the data JSON object
           double cte = std::stod(j[1]["cte"].get<std::string>());
           double speed = std::stod(j[1]["speed"].get<std::string>());
           double angle = std::stod(j[1]["steering_angle"].get<std::string>());
-          double steer_value;
+          double steer_value; 
           /*
           * TODO: Calcuate steering value here, remember the steering value is
           * [-1, 1].
           * NOTE: Feel free to play around with the throttle and speed. Maybe use
           * another PID controller to control the speed!
           */
-          
-          // DEBUG
-          std::cout << "CTE: " << cte << " Steering Value: " << steer_value << std::endl;
+
+          t++; //time counter
+
+          if( t > 10){
+            pid_speed.i_error = 0;
+            pid_pos.i_error   = 0;
+            t = 0;
+          }
+
+          // pid for speed
+          double speed_cte = speed - set_speed ;
+          pid_speed.UpdateError(speed_cte);
+          double throttle = pid_speed.Control();
+          // I asume the boundaries of the trhottle as I no see any difference above 20
+          if (throttle > 20)
+            throttle = 20;
+          if (throttle < -20)
+            throttle = -20;
+
+ 
+          // For tuning only 
+          /*
+          if( fabs(cte) > 5){
+            std::string reset_msg = "42[\"reset\",{}]";
+            ws.send(reset_msg.data(), reset_msg.length(), uWS::OpCode::TEXT);
+          }
+          */
+
+          // pid for position
+          pid_pos.UpdateError(cte);
+          steer_value = pid_pos.Control();
+          if (steer_value > 1)
+            steer_value = 1;
+          if (steer_value < -1)
+            steer_value = -1;
+
 
           json msgJson;
           msgJson["steering_angle"] = steer_value;
-          msgJson["throttle"] = 0.3;
+          msgJson["throttle"] = throttle;
           auto msg = "42[\"steer\"," + msgJson.dump() + "]";
           std::cout << msg << std::endl;
           ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
@@ -74,6 +124,16 @@ int main()
         ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
       }
     }
+    else{
+      //For tunning only
+      /*
+      pid_pos.Init(pid_pos.Kp, 0, pid_pos.Kd + 0.01);
+      set_speed += 5;
+      t = 0;
+      */
+    }
+
+
   });
 
   // We don't need this since we're not using HTTP but if it's removed the program
@@ -101,7 +161,8 @@ int main()
   });
 
   int port = 4567;
-  if (h.listen(port))
+  if (h.listen("0.0.0.0", port)) //changed for windows
+  //if (h.listen(port)) //original
   {
     std::cout << "Listening to port " << port << std::endl;
   }
